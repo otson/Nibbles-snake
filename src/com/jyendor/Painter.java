@@ -20,8 +20,6 @@ import javax.swing.JPanel;
  */
 public class Painter extends JPanel implements KeyListener {
 
-    
-
     public final int CELL_HEIGHT;
     public final int CELL_WIDTH;
 
@@ -50,19 +48,21 @@ public class Painter extends JPanel implements KeyListener {
         // Clear board
         super.paintComponent(g);
         // Draw worm
-        g.setColor(WORM_COLOR);
+        
         Coordinate head = game.getWorm().peekLast();
+        g.setColor(WORM_COLOR);
         for (Coordinate wormCell : game.getWorm()) {
             if (wormCell == head) {
                 g.setColor(WORM_HEAD_COLOR);
             }
             g.fillRect(wormCell.x * CELL_WIDTH, wormCell.y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT);
         }
-        // Draw eatable
-        if (game.getEatable() != null) {
-            Coordinate eatable = game.getEatable();
+        // Draw eatables
+        if (!game.getEatables().isEmpty()) {
             g.setColor(EATABLE_COLOR);
-            g.fillRect(eatable.x * CELL_WIDTH, eatable.y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT);
+            for (Coordinate eatable : game.getEatables()) {
+                g.fillRect(eatable.x * CELL_WIDTH, eatable.y * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT);
+            }
         }
     }
 

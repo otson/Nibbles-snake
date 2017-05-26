@@ -6,17 +6,12 @@
 package com.jyendor;
 
 import java.awt.BorderLayout;
-import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Toolkit;
-import java.awt.event.KeyEvent;
-import java.awt.event.KeyListener;
 import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.Queue;
 import java.util.Random;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.swing.JFrame;
 
 /**
@@ -30,36 +25,37 @@ public class Game implements Runnable {
     public final int WIDTH_CELLS = 60;
     public final int HEIGHT_CELLS = 40;
 
-    public final float TIME_BETWEEN_MOVING = 60; //ms
-    public final int REFRESH_RATE = 60;
+    public final float TIME_BETWEEN_MOVING = 35; //ms
+    public final int REFRESH_RATE = 59;
     public long timeSinceMoving = 9999;
     public long lastMoveTime = 0;
 
     public final int WORM_START_LENGTH = 4;
+    public final int NUMBER_OF_EATABLES = 3;
 
     public boolean playing = true;
-    public boolean movingRight = false;
-    public boolean movingLeft = false;
-    public boolean movingUp = true;
-    public boolean movingDown = false;
+    public AtomicBoolean movingRight = new AtomicBoolean(false);
+    public AtomicBoolean movingLeft = new AtomicBoolean(false);
+    public AtomicBoolean movingUp = new AtomicBoolean(true);
+    public AtomicBoolean movingDown = new AtomicBoolean(false);
     private boolean ate = false;
     private boolean changedDirectionThisTurn = false;
     public Painter painter;
     private Random random = new Random();
     private Thread thread;
-    
+
     private final String TITLE = "Nibbles3";
 
-    private final LinkedList<Coordinate> worm = new LinkedList<>();
-    private Coordinate eatable;
+    private final ConcurrentLinkedDeque<Coordinate> worm = new ConcurrentLinkedDeque<>();
+    private ArrayList<Coordinate> eatables = new ArrayList<>();
     int fps = 0;
     long lastFPSCheck;
     JFrame frame;
     int count = 0;
-    
+
     public Game() {
         frame = new JFrame(TITLE);
-        frame.setSize(new Dimension(WIDTH_PIXELS+6, HEIGHT_PIXELS+28));
+        frame.setSize(new Dimension(WIDTH_PIXELS + 6, HEIGHT_PIXELS + 28));
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setLocationRelativeTo(null);
         frame.setResizable(false);
@@ -72,7 +68,9 @@ public class Game implements Runnable {
         createNewEatable();
 
         lastMoveTime = System.currentTimeMillis();
+        lastFPSCheck = System.nanoTime();
         thread = new Thread(this, "Nibbles");
+        thread.setPriority(Thread.MAX_PRIORITY);
         thread.start();
     }
 
@@ -82,8 +80,14 @@ public class Game implements Runnable {
             tick();
             painter.repaint();
             Toolkit.getDefaultToolkit().sync();
+            fps++;
+            if (System.nanoTime() - lastFPSCheck > 1000000000) {
+                System.out.println("FPS: " + fps);
+                fps = 0;
+                lastFPSCheck = System.nanoTime();
+            }
             try {
-                Thread.sleep(17);
+                Thread.sleep(1000 / REFRESH_RATE);
             } catch (InterruptedException ex) {
                 ex.getStackTrace();
             }
@@ -92,7 +96,8 @@ public class Game implements Runnable {
 
     private void tick() {
         count++;
-        if (count>2) {
+        if (System.currentTimeMillis() - lastMoveTime > TIME_BETWEEN_MOVING) {
+            lastMoveTime = System.currentTimeMillis();
             count = 0;
             moveWorm();
             checkIfAte();
@@ -104,31 +109,31 @@ public class Game implements Runnable {
         if (ate) {
             ate = false;
         } else {
-            worm.pop();
+            worm.remove();
         }
         Coordinate head = worm.peekLast();
 
         int newX = head.x;
         int newY = head.y;
-        if (movingRight) {
+        if (movingRight.get()) {
             newX++;
             if (newX > WIDTH_CELLS - 1) {
                 newX = 0;
             }
         }
-        if (movingLeft) {
+        if (movingLeft.get()) {
             newX--;
             if (newX < 0) {
                 newX = WIDTH_CELLS - 1;
             }
         }
-        if (movingUp) {
+        if (movingUp.get()) {
             newY--;
             if (newY < 0) {
                 newY = HEIGHT_CELLS - 1;
             }
         }
-        if (movingDown) {
+        if (movingDown.get()) {
             newY++;
             if (newY > HEIGHT_CELLS - 1) {
                 newY = 0;
@@ -143,81 +148,94 @@ public class Game implements Runnable {
         int startX = WIDTH_CELLS / 2;
         int startY = HEIGHT_CELLS / 2 - WORM_START_LENGTH / 2;
         for (int y = 0; y < WORM_START_LENGTH; y++) {
-            worm.add(new Coordinate(startX, startY - y - WORM_START_LENGTH));
+            worm.offer(new Coordinate(startX, startY + y - WORM_START_LENGTH));
         }
     }
 
     private void checkIfAte() {
         Coordinate head = worm.peekLast();
-        if (head.x == eatable.x && head.y == eatable.y) {
-            ate = true;
-            createNewEatable();
+        for (Coordinate eatable : eatables) {
+            if (head.x == eatable.x && head.y == eatable.y) {
+                ate = true;
+                eatables.remove(eatable);
+                createNewEatable();
+                break;
+            }
         }
     }
 
     public void resetMovingDirections() {
-        movingUp = false;
-        movingDown = false;
-        movingLeft = false;
-        movingRight = false;
+        movingUp.set(false);
+        movingDown.set(false);
+        movingLeft.set(false);
+        movingRight.set(false);
     }
 
     public void setMoveDirectionToUp() {
-        if (!movingDown && !changedDirectionThisTurn) {
+        if (!movingDown.get() && !changedDirectionThisTurn) {
             resetMovingDirections();
-            movingUp = true;
+            movingUp.set(true);
             changedDirectionThisTurn = true;
         }
     }
 
     public void setMoveDirectionToDown() {
-        if (!movingUp && !changedDirectionThisTurn) {
+        if (!movingUp.get() && !changedDirectionThisTurn) {
             resetMovingDirections();
-            movingDown = true;
+            movingDown.set(true);
             changedDirectionThisTurn = true;
         }
     }
 
     public void setMoveDirectionToLeft() {
-        if (!movingRight && !changedDirectionThisTurn) {
+        if (!movingRight.get() && !changedDirectionThisTurn) {
             resetMovingDirections();
-            movingLeft = true;
+            movingLeft.set(true);
             changedDirectionThisTurn = true;
         }
     }
 
     public void setMoveDirectionToRight() {
-        if (!movingLeft && !changedDirectionThisTurn) {
+        if (!movingLeft.get() && !changedDirectionThisTurn) {
             resetMovingDirections();
-            movingRight = true;
+            movingRight.set(true);
             changedDirectionThisTurn = true;
         }
     }
 
     public void createNewEatable() {
-        boolean isCreated = false;
-        while (!isCreated) {
-            boolean isValid = true;
-            Coordinate potentialEatable = new Coordinate(random.nextInt(WIDTH_CELLS - 2) + 1, random.nextInt(HEIGHT_CELLS - 2) + 1);
-            for (Coordinate wormCell : worm) {
-                if (wormCell.x == potentialEatable.x && wormCell.y == potentialEatable.y) {
-                    isValid = false;
-                    break;
+
+        while (eatables.size() < NUMBER_OF_EATABLES) {
+            boolean isCreated = false;
+            while (!isCreated) {
+                boolean isValid = true;
+                Coordinate potentialEatable = new Coordinate(random.nextInt(WIDTH_CELLS - 2) + 1, random.nextInt(HEIGHT_CELLS - 2) + 1);
+                for (Coordinate wormCell : worm) {
+                    if (wormCell.x == potentialEatable.x && wormCell.y == potentialEatable.y) {
+                        isValid = false;
+                        break;
+                    }
                 }
-            }
-            if (isValid) {
-                eatable = potentialEatable;
-                isCreated = true;
+                for (Coordinate existingEatable : eatables) {
+                    if (existingEatable.x == potentialEatable.x && existingEatable.y == potentialEatable.y) {
+                        isValid = false;
+                        break;
+                    }
+                }
+                if (isValid) {
+                    eatables.add(potentialEatable);
+                    isCreated = true;
+                }
             }
         }
     }
 
-    public LinkedList<Coordinate> getWorm() {
+    public ConcurrentLinkedDeque<Coordinate> getWorm() {
         return worm;
     }
 
-    public Coordinate getEatable() {
-        return eatable;
+    public ArrayList<Coordinate> getEatables() {
+        return eatables;
     }
 
 }
